@@ -5,6 +5,8 @@ from fastapi import HTTPException
 
 from src.constants.domain import Role, RunStatus
 from src.models.db import one, rows
+from src.services import batches
+from src.services.batches import DEFAULT_BATCH_SIZE
 from src.services.catalog import audit, catalog
 from src.utils.crypto import canonical
 
@@ -34,15 +36,27 @@ def snapshot_for(cursor, plan):
     return canonical(snapshot)
 
 
-def enqueue(cursor, plan_id, user):
+def enqueue(cursor, plan_id, user, batch_size=DEFAULT_BATCH_SIZE):
     plan = one(cursor, 'SELECT * FROM plans WHERE id=%s', (plan_id,))
     if not plan:
         raise HTTPException(404, '方案版本不存在')
+    snapshot_json = snapshot_for(cursor, plan)
     cursor.execute('INSERT INTO runs(plan_id,snapshot,created_by) VALUES (%s,%s,%s)',
-                   (plan_id, snapshot_for(cursor, plan), user['username']))
+                   (plan_id, snapshot_json, user['username']))
     run_id = cursor.lastrowid
-    audit(cursor, user['username'], 'run_queued', run_id)
-    return {'id': run_id, 'status': RunStatus.QUEUED}
+    total = batches.create_batches(cursor, run_id, json.loads(snapshot_json), batch_size)
+    audit(cursor, user['username'], 'run_queued', f'{run_id}:{total}')
+    return {'id': run_id, 'status': RunStatus.QUEUED, 'total_batches': total, 'batch_size': batch_size}
+
+
+def resume(cursor, run_id, user):
+    run = one(cursor, 'SELECT id,status,published_at FROM runs WHERE id=%s', (run_id,))
+    if not run or (user['role'] == Role.OBSERVER and not run['published_at']):
+        raise HTTPException(404, '当前席位没有可阅的这份报告')
+    if run['status'] in (RunStatus.DONE, RunStatus.FAILED):
+        raise HTTPException(409, '终态运行无需接手；失败请修正凭据后重新运行')
+    # 抢占与审计在 resume_run 自己的事务里完成，避免外层 REPEATABLE READ 读旧
+    return batches.resume_run(run_id, actor=user['username'])
 
 
 def list_plans(cursor, user):
@@ -53,12 +67,15 @@ def list_plans(cursor, user):
 
 def list_runs(cursor, user):
     visibility = '' if user['role'] != Role.OBSERVER else 'WHERE r.published_at IS NOT NULL'
-    return rows(cursor, f'''SELECT {RUN_FIELDS} FROM runs r JOIN plans p ON p.id=r.plan_id
+    return rows(cursor, f'''SELECT {RUN_FIELDS},r.total_batches,r.batch_size,
+        (SELECT COUNT(*) FROM run_batches b WHERE b.run_id=r.id AND b.status='done') AS done_batches
+        FROM runs r JOIN plans p ON p.id=r.plan_id
         {visibility} ORDER BY r.id DESC LIMIT 100''')
 
 
 def get_run(cursor, run_id, user):
-    run = one(cursor, f'''SELECT {RUN_FIELDS}, r.snapshot, r.result FROM runs r
+    run = one(cursor, f'''SELECT {RUN_FIELDS}, r.snapshot, r.result, r.batch_size, r.total_batches,
+        r.worker_epoch, r.heartbeat_at FROM runs r
         JOIN plans p ON p.id=r.plan_id WHERE r.id=%s''', (run_id,))
     if not run or (user['role'] == Role.OBSERVER and not run['published_at']):
         raise HTTPException(404, '当前席位没有可阅的这份报告')
@@ -67,6 +84,9 @@ def get_run(cursor, run_id, user):
     run['catalog'] = {key: snapshot[key] for key in ('halls', 'instruments')}
     run['receipt_refs'] = [row['reference'] for row in snapshot['receipts']]
     run['result'] = json.loads(run['result']) if run['result'] else None
+    run['progress'] = batches.progress(cursor, run_id)
+    run['batch_rows'] = rows(cursor, '''SELECT batch_no,status,start_index,end_index,attempt,error,worker_id
+        FROM run_batches WHERE run_id=%s ORDER BY batch_no''', (run_id,))
     return run, snapshot
 
 

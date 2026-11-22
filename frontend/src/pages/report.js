@@ -36,6 +36,29 @@ function pairs(report, familyCode) {
     table(['器材族', '馆对', '左 → 右', '右 → 左', '双向相抵', '净方向'], rows, '该周期没有需要核对的方向流量。'));
 }
 
+function badgeTone(status) {
+  return status === 'done' ? 'green' : status === 'failed' ? 'red' : '';
+}
+
+function progressPanel(report, canResume) {
+  const { progress, batch_rows: batchRows } = report;
+  if (!progress || report.status === 'done') return '';
+  const chips = batchRows.map(batch =>
+    `<span class="batch-chip ${batch.status}" title="批次 ${batch.batch_no}">第 ${batch.batch_no} 批 · ${e(runNames[batch.status] || batch.status)}</span>`).join('');
+  const resumeButton = canResume && report.status !== 'failed'
+    ? '<button id="resume" class="outline">中断接手 ↻</button>' : '';
+  return `<section class="progress-card" role="status" aria-live="polite">
+    <div class="progress-head"><strong>${progress.percent}%</strong>
+      <span>已核算 ${progress.receipts_done} / ${progress.receipt_total} 份凭据 ·
+      批次 ${progress.done_batches} / ${progress.total_batches} 完成
+      （每批 ${report.batch_size} 份，沿用本次冻结快照）</span></div>
+    <div class="progress-track"><div class="progress-fill" style="width:${progress.percent}%"></div></div>
+    <div class="batch-grid">${chips}</div>
+    <div class="progress-actions">${resumeButton}<p class="error" id="resume-error" role="alert"></p></div>
+    ${report.status === 'failed' ? `<p class="error" role="alert">${e(report.error || '核验失败')}</p>` :
+      '<p class="inline-note">全部批次核验完成前不会生成净流报告与 CSV。</p>'}</section>`;
+}
+
 function reportBody(report, familyCode = '') {
   const { result, catalog } = report;
   const scope = familyCode ? result.family[familyCode] : result;
@@ -62,12 +85,14 @@ export function reportPage() {
   const heading = lead('净流报告', '以签名凭据核对跨馆调借流向与收支平衡。', picker);
   const summary = `<section class="report-banner"><div><span class="banner-date code">${period(report.start_on, report.end_on)}</span>
     <h2>${e(report.series)} <span class="version">v${report.version}</span></h2>
-    <div class="banner-badges">${badge(runNames[report.status], report.status === 'done' ? 'green' : 'red')}
+    <div class="banner-badges">${badge(runNames[report.status], badgeTone(report.status))}
     ${badge(report.published_at ? '已发布' : '待复核')}</div></div>
     <div class="report-actions">${result && session.user.role === 'reviewer' && !report.published_at ? '<button id="publish" class="primary">复核通过并发布</button>' : ''}
     ${result ? '<button id="export" class="outline">下载 CSV ↓</button>' : ''}<p class="error" id="report-error" role="alert"></p></div></section>`;
-  if (!result) return heading + summary + `<div class="empty" ${report.status === 'queued' ? 'role="status"' : ''}>
-    ${report.status === 'queued' ? '后台正在计算这一批签名凭据，完成后将显示行列核对。' : e(report.error || '核验失败，请核对凭据后重新运行。')}</div>`;
+  if (!result) return heading + summary + progressPanel(report, session.user.role === 'analyst') +
+    `<div class="empty" ${report.status === 'queued' || report.status === 'running' ? 'role="status"' : ''}>
+    ${report.status === 'failed' ? e(report.error || '核验失败，请核对凭据后重新运行。')
+      : '后台正在分批核算这一批签名凭据，可在此查看进度；全部批次完成后才显示行列核对与报告。'}</div>`;
   const stats = `<dl class="stats"><div><dt>有效调借</dt><dd>${result.total_out}<small> 件</small></dd></div>
     <div><dt>签名冲销量</dt><dd>${result.reversal}<small> 件</small></dd></div>
     <div><dt>双向相抵</dt><dd>${result.matched}<small> 件</small></dd></div>
@@ -90,14 +115,16 @@ export function bindReport(refresh) {
     document.querySelector('#family').focus();
   });
   swapFamily();
-  const action = (selector, handler) => document.querySelector(selector)?.addEventListener('click', async event => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    document.querySelector('#report-error').textContent = '';
-    try { await handler(); }
-    catch (error) { document.querySelector('#report-error').textContent = error.message; }
-    finally { button.disabled = false; }
-  });
+  const action = (selector, handler, errorSelector = '#report-error') =>
+    document.querySelector(selector)?.addEventListener('click', async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      const errorBox = document.querySelector(errorSelector);
+      if (errorBox) errorBox.textContent = '';
+      try { await handler(); }
+      catch (error) { if (errorBox) errorBox.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
   action('#publish', async () => {
     await request(`/runs/${report.id}/publish`, { body: {} });
     await refresh('报告已发布，馆务观察席现可查阅。');
@@ -106,5 +133,9 @@ export function bindReport(refresh) {
     const blob = await request(`/runs/${report.id}/export`, { raw: true });
     saveFile(blob, `flow-${report.id}.csv`);
   });
-  if (report?.status === 'queued') return setTimeout(() => refresh(), 1200);
+  action('#resume', async () => {
+    await request(`/runs/${report.id}/resume`, { body: {} });
+    await refresh('已接手该运行，从未完成批次继续核算，沿用本次冻结的凭据快照。');
+  }, '#resume-error');
+  if (report.status === 'queued' || report.status === 'running') return setTimeout(() => refresh(), 1200);
 }

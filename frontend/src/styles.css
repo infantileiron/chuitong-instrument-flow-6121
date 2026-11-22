@@ -129,6 +129,19 @@ input, select { min-height: 37px; width: 100%; min-width: 0; padding: 6px 8px; b
 .net-foot strong { font: 700 19px var(--mono); }
 .lineage { border-top: 1px solid var(--line); color: var(--muted); padding: 14px 19px; display: grid; gap: 7px; overflow-wrap: anywhere; }
 .lineage summary { cursor: pointer; color: var(--accent); }
+.progress-card { background: var(--card); border: 1px solid var(--line); border-top: 0; padding: 16px 19px; margin-bottom: 18px; }
+.progress-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.progress-head strong { font: 700 20px var(--serif); font-variant-numeric: tabular-nums; }
+.progress-head span { color: var(--muted); font-size: 12px; }
+.progress-track { height: 8px; background: var(--paper); border: 1px solid var(--line); margin: 12px 0 14px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); transition: width .4s ease; }
+.batch-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.batch-chip { font-size: 11px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 2px; color: var(--muted); background: var(--paper); font-variant-numeric: tabular-nums; }
+.batch-chip.done { color: var(--green); background: var(--green-light); border-color: oklch(83% .038 149); }
+.batch-chip.running { color: var(--accent); background: var(--accent-light); border-color: oklch(83% .049 28); }
+.batch-chip.failed { color: #fff; background: var(--accent); border-color: var(--accent); }
+.progress-actions { margin-top: 13px; display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+.progress-actions .error { font-size: 12px; }
 .login-layout { display: grid; grid-template-columns: 57% 43%; min-height: 100vh; }
 .login-cover { position: relative; display: flex; flex-direction: column; justify-content: space-between; color: var(--rail-light); padding: clamp(26px, 5.7vw, 88px);
   background: repeating-linear-gradient(to bottom, transparent 0 17px, oklch(74% .09 35 / .30) 17px 18px, transparent 18px 23px) left bottom 24% / 100% 115px no-repeat, var(--rail); }

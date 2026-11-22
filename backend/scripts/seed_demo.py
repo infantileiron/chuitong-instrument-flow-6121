@@ -2,6 +2,7 @@ import json
 
 from scripts.fixtures import HALLS, INSTRUMENTS, LOANS, REVERSALS, SERIES, USERS
 from src.models.db import one, transaction
+from src.services import batches
 from src.services.ledger import insert
 from src.services.pivot import calculate
 from src.services.plans import snapshot_for
@@ -29,11 +30,20 @@ def seed(cursor):
         plan = one(cursor, 'SELECT * FROM plans WHERE series=%s AND version=1', (SERIES,))
         snapshot_json = snapshot_for(cursor, plan)
         snapshot = json.loads(snapshot_json)
-        result = calculate(snapshot)
-        cursor.execute('''INSERT INTO runs(seed_key,plan_id,status,snapshot,result,created_by,published_at,published_by)
-            VALUES ('november-baseline',%s,'done',%s,%s,'analyst','2026-11-16 10:30:00','reviewer')''',
+        result = calculate(snapshot, batch_size=4)
+        cursor.execute('''INSERT INTO runs(seed_key,plan_id,status,snapshot,result,created_by,published_at,published_by,
+            batch_size,total_batches,worker_epoch)
+            VALUES ('november-baseline',%s,'done',%s,%s,'analyst','2026-11-16 10:30:00','reviewer',4,1,1)''',
                        (plan['id'], snapshot_json, canonical(result)))
-        save_report(cursor.lastrowid, snapshot, result)
+        run_id = cursor.lastrowid
+        # 演示基线同样保留批次痕迹，便于透视页展示分批核算口径
+        for batch_no, (start, end) in enumerate(batches.split_batches(snapshot['receipts'], 4), start=1):
+            partial, reversed_ids = batches.process_batch(snapshot, start, end, set())
+            cursor.execute('''INSERT INTO run_batches(run_id,batch_no,start_index,end_index,status,partial,
+                reversed_ids,worker_id,attempt,started_at,finished_at)
+                VALUES (%s,%s,%s,%s,'done',%s,%s,'seed',1,UTC_TIMESTAMP(),UTC_TIMESTAMP())''',
+                           (run_id, batch_no, start, end, canonical(partial), canonical(reversed_ids)))
+        save_report(run_id, snapshot, result)
     counts = {table: one(cursor, f'SELECT COUNT(*) AS count FROM {table}')['count'] for table in
               ('users', 'halls', 'instruments', 'receipts', 'plans', 'runs', 'audit_log')}
     print(canonical(counts))

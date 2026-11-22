@@ -76,6 +76,12 @@ def read_run(run_id: int, user=Depends(auth.current_user)):
         return plans.get_run(cursor, run_id, user)[0]
 
 
+@router.post('/runs/{run_id}/resume', status_code=202)
+def resume_run(run_id: int, user=Depends(analyst)):
+    with transaction() as cursor:
+        return plans.resume(cursor, run_id, user)
+
+
 @router.post('/runs/{run_id}/publish')
 def publish(run_id: int, user=Depends(reviewer)):
     with transaction() as cursor:

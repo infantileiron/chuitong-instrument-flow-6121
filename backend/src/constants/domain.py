@@ -14,5 +14,6 @@ class ReceiptKind(StrEnum):
 
 class RunStatus(StrEnum):
     QUEUED = 'queued'
+    RUNNING = 'running'
     DONE = 'done'
     FAILED = 'failed'

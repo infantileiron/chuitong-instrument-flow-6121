@@ -12,9 +12,14 @@ export function plansPage() {
   const planRows = plans.map(plan => `<tr><th scope="row">${e(plan.series)} <span class="code">v${plan.version}</span></th>
     <td class="nowrap">${period(plan.start_on, plan.end_on)}</td><td>${e(instruments[plan.instrument] || '全部')}</td>
     ${analyst ? `<td><button class="quiet" data-run="${plan.id}">运行透视 →</button></td>` : ''}</tr>`).join('');
-  const runRows = runs.map(row => `<tr><th scope="row"><a href="#report/${row.id}">${e(row.series)} · v${row.version}</a>
-    <small class="code">#${row.id}</small></th><td>${badge(runNames[row.status], row.status === 'done' ? 'green' : '')}</td>
-    <td>${row.published_at ? '已发布' : '待复核'}</td></tr>`).join('');
+  const runRows = runs.map(row => {
+    const tone = row.status === 'done' ? 'green' : row.status === 'failed' ? 'red' : '';
+    const batchInfo = row.total_batches
+      ? `<small class="code">批次 ${row.done_batches ?? 0}/${row.total_batches}</small>` : '';
+    return `<tr><th scope="row"><a href="#report/${row.id}">${e(row.series)} · v${row.version}</a>
+      <small class="code">#${row.id}</small> ${batchInfo}</th><td>${badge(runNames[row.status], tone)}</td>
+      <td>${row.published_at ? '已发布' : '待复核'}</td></tr>`;
+  }).join('');
   const form = `<form id="plan-form" class="entry-form"><label class="wide">订阅名称<input name="series" required minlength="2" maxlength="64" value="十一月上半月调借"></label>
     <label>版本号<input name="version" type="number" min="1" max="10000" value="2" required></label>
     <label>器材族<select name="instrument">${option('', '全部器材')}${catalog.instruments.map(item => option(item.code, item.name)).join('')}</select></label>

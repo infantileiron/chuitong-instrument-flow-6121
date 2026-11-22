@@ -35,6 +35,15 @@
 - 每馆出借为矩阵行和，入借为列和，净流 `入借 − 出借`。全体行和与全体列和都应等于签领减冲销，全馆净流合计应为 0。两向相抵另列供核对，矩阵继续显示两向记账有效量。跨器材族按件数展示汇总，同方向的笙、鼓、锣各保留专属明细。
 - 方案版本参数不可变，可复用同一版本重新计算。创建运行时冻结凭据和名录，并在结果中显示快照 SHA-256。发布和 CSV 始终引用该运行，后续补录通过新的运行纳入。
 
+## 分批核算与中断续跑
+
+大批量凭据按 `PIVOT_BATCH_SIZE`（默认每批 5 份）切成固定批次，批次边界只由冻结快照的凭据序号决定，创建运行时写入 `run_batches`，因此续跑不会漂移，也始终沿用本次锁定的同一份凭据与名录快照。
+
+- worker 每次用 `FOR UPDATE SKIP LOCKED` 领取一个未完成批次，验签后只把「同族同方向」的签领/冲销件数累加进该批的 JSON 中间态并提交；全部批次完成后才合并累加器、计算双向相抵量与边际守恒。由于合并与相抵都是线性运算，分批结果与一次算完逐字节一致（后端 `tests/` 对 1–15 等多种切批断言恒等）。
+- 冲销与原签领的核对跨批生效：每批都拿此前已完成批次登记的原单 id 集合去重，同一张原签领在同一批或不同批被冲销两次都会令运行 `failed`；收口合并时还有一道全局去重兜底，防止多 worker 并发批次各自通过。窗口外的原签领保存在快照 `originals` 中单独验签。
+- 进程中断或交班后，已 `done` 的批次中间态原样保留；透视页显示凭据级与批次级进度，分析员点击「中断接手」（或等 worker 下一轮自动领取）即可从首个未完成批次续跑。心跳超过 `RUN_STALE_SECONDS`（默认 30 秒）的运行可被抢占：`worker_epoch` 自增、卡在 `running` 的批次回队，旧进程迟到的提交与收口写入会被带纪元的条件 UPDATE 拒绝，无法覆盖新结果。
+- 运行在 `queued/running` 期间不写 `result`、不生成 CSV，发布与导出接口仍只接受 `done`；核验失败只落 `failed` 状态和批次错误信息，不出报告。CSV 在数据库收口事务提交成功后才落盘，避免 fencing 失败时留下孤儿报告。
+
 ## 运行
 
 使用 Docker Compose，从源码根目录执行：
@@ -58,7 +67,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 本地开发时保留同源代理。改动前端后执行 `docker compose up --build --wait frontend`，改动计算或 API 后重建 `backend` 和 `worker`。API 输入可在 FastAPI 文档中交互测试。
 
-`backend/migrations/` 保存初始数据库结构，`backend/scripts/` 管理迁移与演示数据，`backend/src/` 按数据访问、计算、接口和中间件拆分。`frontend/src/` 包含页面、API 客户端、会话和共享表格/表单。数据库、Redis、CSV 分别使用命名卷。
+`backend/migrations/` 保存初始数据库结构，`backend/scripts/` 管理迁移与演示数据，`backend/src/` 按数据访问、计算、接口和中间件拆分。`frontend/src/` 包含页面、API 客户端、会话和共享表格/表单。数据库、Redis、CSV 分别使用命名卷。无 Docker 环境下可在 `backend/` 执行 `python3 -m tests.run_all`，用标准库内存假库跑分批恒等、续跑、纪元 fencing 与双冲销用例（不依赖 MySQL）。
 
 `.env.example` 列出端口、`NETWORK_SUBNET`、Compose 短名、MySQL 凭据、两枚独立密钥与 `SEED_DEMO`。默认子网 `10.221.212.0/24`，可在分配冲突时覆盖。`JWT_SECRET` 是会话密钥，`LEDGER_SECRET` 需在首次签名之前确定并与数据一起持久保管。启动自动应用建表脚本并按 `SEED_DEMO` 载入样本，按自然键补齐，已有编号和签名保留。
 

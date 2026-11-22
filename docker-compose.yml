@@ -9,6 +9,8 @@ x-app: &app
     JWT_SECRET: ${JWT_SECRET:-ct-demo-session-change-at-deployment}
     LEDGER_SECRET: ${LEDGER_SECRET:-ct-demo-ledger-change-before-first-signature}
     SEED_DEMO: ${SEED_DEMO:-true}
+    PIVOT_BATCH_SIZE: ${PIVOT_BATCH_SIZE:-5}
+    RUN_STALE_SECONDS: ${RUN_STALE_SECONDS:-30}
   volumes:
     - reports:/reports
   depends_on:
